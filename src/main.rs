@@ -2,8 +2,15 @@
 // The async runtime being used, is `tokio`
 // This starter also has logging, powered by `tracing` and `tracing-subscriber`
 
-use axum::{http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{extract::Query, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use serde_derive::{Deserialize, Serialize};
 use std::net::SocketAddr;
+
+#[derive(Deserialize, Serialize)]
+struct SearchQuery {
+    keyword: String,
+    offset: usize,
+}
 
 // This derive macro allows our main function to run asyncrohnous code. Without it, the main function would run syncrohnously
 #[tokio::main]
@@ -24,7 +31,9 @@ async fn main() {
         // This can be repeated as many times as you want to create more routes
         // We are also going to create a more complex route, using `impl IntoResponse`
         // The code of the complex function is below
-        .route("/complex", get(complex));
+        .route("/search", get(search))
+        .route("/insert", get(insert))
+        .route("/delete", get(delete));
 
     // Next, we need to run our app with `hyper`, which is the HTTP server used by `axum`
     // We need to create a `SocketAddr` to run our server on
@@ -64,7 +73,7 @@ async fn root() -> &'static str {
 // Make sure the function is async
 // We specify our return type, this time using `impl IntoResponse`
 
-async fn complex() -> impl IntoResponse {
+async fn delete() -> impl IntoResponse {
     // For this route, we are going to return a Json response
     // We create a tuple, with the first parameter being a `StatusCode`
     // Our second parameter, is the response body, which in this example is a `Json` instance
@@ -72,6 +81,34 @@ async fn complex() -> impl IntoResponse {
     (
         StatusCode::OK,
         Json(serde_json::json!({
+            "message": "delete, delete!"
+        })),
+    )
+}
+
+async fn insert() -> impl IntoResponse {
+    // For this route, we are going to return a Json response
+    // We create a tuple, with the first parameter being a `StatusCode`
+    // Our second parameter, is the response body, which in this example is a `Json` instance
+    // We construct data for the `Json` struct using the `serde_json::json!` macro
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "message": "insert, insert!"
+        })),
+    )
+}
+
+async fn search(query: Query<SearchQuery>) -> impl IntoResponse {
+    // For this route, we are going to return a Json response
+    // We create a tuple, with the first parameter being a `StatusCode`
+    // Our second parameter, is the response body, which in this example is a `Json` instance
+    // We construct data for the `Json` struct using the `serde_json::json!` macro
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "query": query.keyword,
+            "offset": query.offset,
             "message": "Hello, World!"
         })),
     )
