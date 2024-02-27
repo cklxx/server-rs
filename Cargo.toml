@@ -13,3 +13,11 @@ serde_derive = "*"
 tokio = { version = "1.29.1", features = ["full"] }
 tracing = "0.1.37"
 tracing-subscriber = "0.3.17"
+jieba-rs = "0.6"
+walkdir = "2.4.0"
+tantivy-jieba = "0.10.0"
+tantivy = "0.21"
+deadpool-diesel = { version = "0.4.1", features = ["postgres"] }
+diesel = { version = "2", features = ["postgres"] }
+diesel_migrations = "2"
+tempfile = { version = "3.3.0" }

@@ -1,10 +1,53 @@
 // This starter uses the `axum` crate to create an asyncrohnous web server
 // The async runtime being used, is `tokio`
 // This starter also has logging, powered by `tracing` and `tracing-subscriber`
-
-use axum::{extract::Query, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+mod crawler;
+mod error;
+mod nlpcut;
+mod search;
+use axum::routing::post;
+use axum::{
+    extract::Query, extract::State, http::StatusCode, response::IntoResponse, routing::get, Json,
+    Router,
+};
+use deadpool_diesel::{Manager, Pool};
+use diesel::prelude::*;
+use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
+use rust_starter::Result;
 use serde_derive::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use tantivy::collector::TopDocs;
+use tantivy::query::QueryParser;
+use tantivy::schema::*;
+use tantivy::{doc, Index, IndexWriter};
+
+pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/");
+
+// normally part of your generated schema.rs file
+table! {
+    docs (id) {
+        id -> Integer,
+        title -> Text,
+        content -> Nullable<Text>,
+        doc_type -> Nullable<Text>,
+    }
+}
+
+#[derive(serde::Serialize, Selectable, Queryable)]
+struct Doc {
+    id: i32,
+    title: String,
+    content: Option<String>,
+    doc_type: Option<String>,
+}
+
+#[derive(serde::Deserialize, Insertable)]
+#[diesel(table_name = docs)]
+struct NewDoc {
+    title: String,
+    content: Option<String>,
+    doc_type: Option<String>,
+}
 
 #[derive(Deserialize, Serialize)]
 struct SearchQuery {
@@ -12,44 +55,84 @@ struct SearchQuery {
     offset: usize,
 }
 
+#[derive(Deserialize, Serialize)]
+struct InsertDoc {
+    title: String,
+    doc: String,
+    id: usize,
+}
+
+#[derive(Clone)]
+struct AppState {
+    index: tantivy::Index,
+    feild: (Field, Field, Field),
+    pgpool: Pool<Manager<PgConnection>>,
+}
+
 // This derive macro allows our main function to run asyncrohnous code. Without it, the main function would run syncrohnously
 #[tokio::main]
 async fn main() {
-    // First, we initialize the tracing subscriber with default configuration
-    // This is what allows us to print things to the console
     tracing_subscriber::fmt::init();
 
-    // Then, we create a router, which is a way of routing requests to different handlers
+    let mut schema_builder = Schema::builder();
+
+    let text_field_indexing = TextFieldIndexing::default()
+        .set_tokenizer("jieba")
+        .set_index_option(IndexRecordOption::WithFreqsAndPositions);
+    let text_options = TextOptions::default()
+        .set_indexing_options(text_field_indexing)
+        .set_stored();
+
+    let title = schema_builder.add_text_field("title", text_options.clone());
+
+    let body = schema_builder.add_text_field("body", text_options);
+    let id = schema_builder.add_u64_field("idstr", INDEXED);
+
+    let schema = schema_builder.build();
+
+    let index_path = tempfile::TempDir::new().unwrap();
+    let index = Index::create_in_dir(&index_path, schema.clone()).unwrap();
+
+    let tokenizer = tantivy_jieba::JiebaTokenizer {};
+    index.tokenizers().register("jieba", tokenizer);
+
+    let db_url = std::env::var("DATABASE_URL").unwrap();
+
+    // set up connection pool
+    let manager = deadpool_diesel::postgres::Manager::new(db_url, deadpool_diesel::Runtime::Tokio1);
+    let pgpool = deadpool_diesel::postgres::Pool::builder(manager)
+        .build()
+        .unwrap();
+
+    // run the migrations on server startup
+    {
+        let conn = pgpool.get().await.unwrap();
+        conn.interact(|conn| conn.run_pending_migrations(MIGRATIONS).map(|_| ()))
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let state = AppState {
+        index,
+        feild: (title, body, id),
+        pgpool,
+    };
     let app = Router::new()
-        // In order to add a route, we use the `route` method on the router
-        // The `route` method takes a path (as a &str), and a handler (MethodRouter)
-        // In our invocation below, we create a route, that goes to "/"
-        // We specify what HTTP method we want to accept on the route (via the `get` function)
-        // And finally, we provide our route handler
-        // The code of the root function is below
         .route("/", get(root))
-        // This can be repeated as many times as you want to create more routes
-        // We are also going to create a more complex route, using `impl IntoResponse`
-        // The code of the complex function is below
         .route("/search", get(search))
         .route("/insert", get(insert))
-        .route("/delete", get(delete));
+        .route("/delete", get(delete))
+        .route("/feed", get(feed))
+        .route("/insert_doc", post(insert_doc))
+        .with_state(state);
 
-    // Next, we need to run our app with `hyper`, which is the HTTP server used by `axum`
-    // We need to create a `SocketAddr` to run our server on
-    // Before we can create that, we need to get the port we wish to serve on
-    // This code attempts to get the port from the environment variable `PORT`
-    // If it fails to get the port, it will default to "3000"
-    // We then parse the `String` into a `u16`, to which if it fails, we panic
     let port: u16 = std::env::var("PORT")
         .unwrap_or("3000".into())
         .parse()
         .expect("failed to convert to number");
-    // We then create a socket address, listening on 0.0.0.0:PORT
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    // We then log the address we are listening on, using the `info!` macro
-    // The info macro is provided by `tracing`, and allows us to log stuff at an info log level
     tracing::info!("listening on {}", addr);
+
     // Then, we run the server, using the `bind` method on `Server`
     // `axum::Server` is a re-export of `hyper::Server`
     axum::Server::bind(&addr)
@@ -57,7 +140,6 @@ async fn main() {
         .serve(app.into_make_service())
         // This function is async, so we need to await it
         .await
-        // Then, we unwrap the result, to which if it fails, we panic
         .unwrap();
 }
 
@@ -86,30 +168,94 @@ async fn delete() -> impl IntoResponse {
     )
 }
 
-async fn insert() -> impl IntoResponse {
+async fn insert(
+    query: Query<InsertDoc>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse> {
     // For this route, we are going to return a Json response
     // We create a tuple, with the first parameter being a `StatusCode`
     // Our second parameter, is the response body, which in this example is a `Json` instance
     // We construct data for the `Json` struct using the `serde_json::json!` macro
-    (
+    let mut index_writer: IndexWriter = state.index.writer(50_000_000)?;
+    let (title, body, id) = state.feild;
+    index_writer.add_document(doc!(
+        title => query.title.as_str(),
+        id => query.id as u64,
+        body => query.doc.as_str(),
+    ))?;
+    index_writer.commit()?;
+    Ok((
         StatusCode::OK,
         Json(serde_json::json!({
+            "id": query.id,
+            "title": query.title,
+            "doc": query.doc,
             "message": "insert, insert!"
         })),
-    )
+    ))
 }
 
-async fn search(query: Query<SearchQuery>) -> impl IntoResponse {
-    // For this route, we are going to return a Json response
-    // We create a tuple, with the first parameter being a `StatusCode`
-    // Our second parameter, is the response body, which in this example is a `Json` instance
-    // We construct data for the `Json` struct using the `serde_json::json!` macro
-    (
+async fn search(
+    query: Query<SearchQuery>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse> {
+    let reader = state.index.reader()?;
+    let (title, body, _) = state.feild;
+    let searcher = reader.searcher();
+    let query_parser = QueryParser::for_index(&state.index, vec![title, body]);
+
+    let tquery = query_parser.parse_query(query.keyword.as_str())?;
+
+    let top_docs = searcher
+        .search(&tquery, &TopDocs::with_limit(10))
+        .unwrap_or_default();
+    let mut res: Vec<Vec<FieldValue>> = Vec::new();
+    for (_, doc_address) in top_docs {
+        let retrieved_doc = searcher.doc(doc_address).unwrap_or_default();
+        res.push(retrieved_doc.field_values().to_owned());
+    }
+    Ok((
         StatusCode::OK,
         Json(serde_json::json!({
             "query": query.keyword,
             "offset": query.offset,
-            "message": "Hello, World!"
+            "res": res,
+            "message": "ok"
         })),
-    )
+    ))
+}
+
+async fn feed(State(state): State<AppState>) -> Result<impl IntoResponse> {
+    let conn = state.pgpool.get().await?;
+    let res = conn
+        .interact(|conn| docs::table.select(Doc::as_select()).load(conn))
+        .await??;
+    Ok(Json(res))
+}
+
+async fn insert_doc(
+    State(state): State<AppState>,
+    Json(new_user): Json<NewDoc>,
+) -> Result<Json<Doc>> {
+    let conn = state.pgpool.get().await?;
+    let res = conn
+        .interact(|conn| {
+            diesel::insert_into(docs::table)
+                .values(new_user)
+                .returning(Doc::as_returning())
+                .get_result(conn)
+        })
+        .await??;
+    Ok(Json(res))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::search::engine::exc_search;
+
+    #[test]
+    pub fn test_search() -> Result<(), ()> {
+        exc_search();
+        Ok(())
+    }
 }
