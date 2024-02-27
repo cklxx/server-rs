@@ -28,8 +28,9 @@ table! {
     docs (id) {
         id -> Integer,
         title -> Text,
-        content -> Nullable<Text>,
-        doc_type -> Nullable<Text>,
+        content -> Text,
+        doc_type -> Text,
+       published -> Nullable<Bool>,
     }
 }
 
@@ -37,16 +38,18 @@ table! {
 struct Doc {
     id: i32,
     title: String,
-    content: Option<String>,
-    doc_type: Option<String>,
+    content: String,
+    doc_type: String,
+    published: Option<bool>,
 }
 
 #[derive(serde::Deserialize, Insertable)]
 #[diesel(table_name = docs)]
 struct NewDoc {
     title: String,
-    content: Option<String>,
-    doc_type: Option<String>,
+    content: String,
+    doc_type: String,
+    published: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize)]
