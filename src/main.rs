@@ -130,7 +130,7 @@ async fn main() {
         .with_state(state);
 
     let port: u16 = std::env::var("PORT")
-        .unwrap_or("3000".into())
+        .unwrap_or("8080".into())
         .parse()
         .expect("failed to convert to number");
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

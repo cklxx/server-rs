@@ -15,7 +15,7 @@ FROM debian:buster-slim
 RUN apt-get update && apt-get install postgresql -y
 COPY --from=builder /src/target/release/rust-starter .
 
-EXPOSE 3000/tcp
-EXPOSE 3000/udp
+EXPOSE 8080/tcp
+EXPOSE 8080/udp
 
 CMD ["./rust-starter"]
