@@ -12,7 +12,7 @@ RUN cargo build --release
 
 FROM debian:buster-slim
 
-RUN apt-get update && apt-get install postgresql libc6 -y
+RUN apt-get update && apt-get install postgresql libc6 -y && apt-get -t buster-backports install libc6
 COPY --from=builder /src/target/release/rust-starter .
 
 EXPOSE 8080/tcp
