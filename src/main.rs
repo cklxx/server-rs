@@ -27,7 +27,8 @@ pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/");
 table! {
     docs (id) {
         id -> Integer,
-        title -> Text,
+        title -> VarChar,
+        url -> VarChar,
         content -> Text,
         doc_type -> Text,
        published -> Nullable<Bool>,
@@ -38,6 +39,7 @@ table! {
 struct Doc {
     id: i32,
     title: String,
+    url: String,
     content: String,
     doc_type: String,
     published: Option<bool>,
@@ -47,6 +49,7 @@ struct Doc {
 #[diesel(table_name = docs)]
 struct NewDoc {
     title: String,
+    url: String,
     content: String,
     doc_type: String,
     published: Option<bool>,
@@ -62,13 +65,14 @@ struct SearchQuery {
 struct InsertDoc {
     title: String,
     doc: String,
+    url: String,
     id: usize,
 }
 
 #[derive(Clone)]
 struct AppState {
     index: tantivy::Index,
-    feild: (Field, Field, Field),
+    feild: (Field, Field, Field, Field),
     pgpool: Pool<Manager<PgConnection>>,
 }
 
@@ -90,6 +94,7 @@ async fn main() {
 
     let body = schema_builder.add_text_field("body", text_options);
     let id = schema_builder.add_u64_field("idstr", INDEXED);
+    let url = schema_builder.add_u64_field("url", INDEXED);
 
     let schema = schema_builder.build();
 
@@ -117,7 +122,7 @@ async fn main() {
     }
     let state = AppState {
         index,
-        feild: (title, body, id),
+        feild: (title, body, id, url),
         pgpool,
     };
     let app = Router::new()
@@ -180,11 +185,12 @@ async fn insert(
     // Our second parameter, is the response body, which in this example is a `Json` instance
     // We construct data for the `Json` struct using the `serde_json::json!` macro
     let mut index_writer: IndexWriter = state.index.writer(50_000_000)?;
-    let (title, body, id) = state.feild;
+    let (title, body, id, url) = state.feild;
     index_writer.add_document(doc!(
         title => query.title.as_str(),
         id => query.id as u64,
         body => query.doc.as_str(),
+        url => query.url.as_str(),
     ))?;
     index_writer.commit()?;
     Ok((
@@ -203,9 +209,9 @@ async fn search(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse> {
     let reader = state.index.reader()?;
-    let (title, body, _) = state.feild;
+    let (title, body, _, url) = state.feild;
     let searcher = reader.searcher();
-    let query_parser = QueryParser::for_index(&state.index, vec![title, body]);
+    let query_parser = QueryParser::for_index(&state.index, vec![title, body, url]);
 
     let tquery = query_parser.parse_query(query.keyword.as_str())?;
 
