@@ -177,8 +177,8 @@ async fn delete() -> impl IntoResponse {
 }
 
 async fn insert(
-    query: Query<InsertDoc>,
     State(state): State<AppState>,
+    Json(doc): Json<InsertDoc>,
 ) -> Result<impl IntoResponse> {
     // For this route, we are going to return a Json response
     // We create a tuple, with the first parameter being a `StatusCode`
@@ -187,10 +187,10 @@ async fn insert(
     let mut index_writer: IndexWriter = state.index.writer(50_000_000)?;
     let (title, body, id, url) = state.feild;
     index_writer.add_document(doc!(
-        title => query.title.as_str(),
-        id => query.id as u64,
-        body => query.doc.as_str(),
-        url => query.url.as_str(),
+        title => doc.title.as_str(),
+        id => doc.id as u64,
+        body => doc.doc.as_str(),
+        url => doc.url.as_str(),
     ))?;
     index_writer.commit()?;
     Ok((
@@ -242,15 +242,12 @@ async fn feed(State(state): State<AppState>) -> Result<impl IntoResponse> {
     Ok(Json(res))
 }
 
-async fn insert_doc(
-    State(state): State<AppState>,
-    Json(new_user): Json<NewDoc>,
-) -> Result<Json<Doc>> {
+async fn insert_doc(State(state): State<AppState>, Json(doc): Json<NewDoc>) -> Result<Json<Doc>> {
     let conn = state.pgpool.get().await?;
     let res = conn
         .interact(|conn| {
             diesel::insert_into(docs::table)
-                .values(new_user)
+                .values(doc)
                 .returning(Doc::as_returning())
                 .get_result(conn)
         })
