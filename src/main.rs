@@ -92,9 +92,9 @@ async fn main() {
 
     let title = schema_builder.add_text_field("title", text_options.clone());
 
-    let body = schema_builder.add_text_field("body", text_options);
+    let body = schema_builder.add_text_field("body", text_options.clone());
     let id = schema_builder.add_u64_field("idstr", INDEXED);
-    let url = schema_builder.add_u64_field("url", INDEXED);
+    let url = schema_builder.add_text_field("url", text_options);
 
     let schema = schema_builder.build();
 
@@ -135,7 +135,7 @@ async fn main() {
         .with_state(state);
 
     let port: u16 = std::env::var("PORT")
-        .unwrap_or("8080".into())
+        .unwrap_or("3000".into())
         .parse()
         .expect("failed to convert to number");
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
