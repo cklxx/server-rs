@@ -128,7 +128,7 @@ async fn main() {
     let app = Router::new()
         .route("/", get(root))
         .route("/search", get(search))
-        .route("/insert", get(insert))
+        .route("/insert", post(insert))
         .route("/delete", get(delete))
         .route("/feed", get(feed))
         .route("/insert_doc", post(insert_doc))
