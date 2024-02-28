@@ -196,9 +196,9 @@ async fn insert(
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
-            "id": query.id,
-            "title": query.title,
-            "doc": query.doc,
+            "id": doc.id,
+            "title": doc.title,
+            "doc": doc.doc,
             "message": "insert, insert!"
         })),
     ))
